@@ -69,16 +69,16 @@ class SACPlane:
 
 class PlaneSegmenter:
     def __init__(self,
-                 distance_tolerance=0.01,
+                 distance_tolerance=0.001,
+                 use_point_normals=True,
+                 normal_distance_weight=0.01,
                  axis=None,
                  perpend=True,
-                 plane_normal_tolerance=0.3,
-                 use_point_normals=True,
-                 normal_distance_weight=0.001,
-                 consume_distance=None,
                  maximum_iterations=10000,
-                 minimum_plane_points=None,
-                 minimum_plane_area=None
+                 plane_normal_tolerance=0.3,
+                 minimum_plane_points=10,
+                 minimum_plane_area=0,
+                 consume_distance=None
                  ):
         """Notes:
 
@@ -105,28 +105,42 @@ class PlaneSegmenter:
         self._use_normals = use_point_normals
         self._cons_dist = consume_distance
         self._max_iter = maximum_iterations
-        self._min_pts = minimum_plane_points
-        self._min_area = minimum_plane_area
+        self._min_face_pts = minimum_plane_points
+        self._min_face_area = minimum_plane_area
         self._log = logging.getLogger('PlaneSegm')
 
     def __call__(self, pc):
         return self.segment(pc)
 
     def segment(self, pc):
-        """Repeatedly extract planes from 'pc'. Return planes and remaining
-        points.
+        """Repeatedly extract planes from 'pc'. The return value is a pair: a
+        list of matched planes contained in SACPlane objects, and the
+        un-consumed point cloud, that is the remainder of the point
+        cloud which was not consumed by the matching planes.
         """
         t0 = time.time()
         # s_origin = pc.sensor_origin
         # s_orientation = pc.sensor_orientation
         # s_pose = m3d.Transform(m3d.UnitQuaternion(*s_orientation).orientation,
         #                        m3d.Vector(s_origin))
+        # The matching planes
         planes = []
+        # The unprocessed points in the point cloud decreases
+        # monotonically as planes are found, whether they match or
+        # not.
+        pc_unprocessed = pc
+        # The points that have not been consumed by the matching
+        # planes steadily increase, as non-matching planes are
+        # found. At the end, the remaining unprocessed points are
+        # added.
+        npc_unconsumed = np.array([], dtype=np.float32).reshape(0,3)
+        # Stop flag is whether a plane search was unsuccesful.
         plane_found = True
-        while (pc.size > self._min_pts
+        while (pc_unprocessed.size > self._min_face_pts
                and plane_found):
+            # Make a segmenter
             if self._use_normals:
-                segm = pc.make_segmenter_normals(ksearch=10)
+                segm = pc_unprocessed.make_segmenter_normals(ksearch=10)
                 segm.set_model_type(pcl.SACMODEL_PLANE)
                 segm.set_normal_distance_weight(self._norm_dist_weight)
                 segm.set_max_iterations(self._max_iter)
@@ -136,60 +150,80 @@ class PlaneSegmenter:
             segm.set_optimize_coefficients(True)
             segm.set_method_type(pcl.SAC_RANSAC)
             segm.set_distance_threshold(self._dist_tol)
+            # Apply segmenter
             idx, model = segm.segment()
+            self._log.debug('Extracting {} points'.format(len(idx)))
             # Check cardinality
-            if len(idx) < self._min_pts:
-                self._log.debug('No plane found (< {} pts)'.format(self._min_pts))
+            if len(idx) < self._min_face_pts:
+                self._log.debug('No plane found (< {} pts)'.format(self._min_face_pts))
                 plane_found = False
                 break
-            pc_pl = pc.extract(idx)
-            pc_rem = pc.extract(idx, negative=True)
-            hull = scipy.spatial.ConvexHull(pc_pl)
-            sapl = SACPlane(model, hull, pc_pl)
+            # Extract points
+            pc_cand = pc_unprocessed.extract(idx)
+            hull = scipy.spatial.ConvexHull(pc_cand)
+            sapl = SACPlane(model, hull, pc_cand)
             plchar = str(sapl)
-            # # Check cardinality
-            # if self._min_pts is not None and len(idx) < self._min_pts:
-            #     self._log.debug('{} - min_points ({})'
-            #                     .format(plchar, self._min_pts))
-            #     pc = pc_rem
-            #     continue
+            # Flag when a test rejects the candidate plane
+            rejected = False
             # Check if correctly oriented
-            if self._axis is not None:
+            if not rejected and self._axis is not None:
                 prod = np.abs(sapl.normal * self._axis)
                 if self._perpend and prod > self._normal_tol:
                     self._log.debug('{} - perpendicular (>{})'
                                     .format(plchar, self._normal_tol))
-                    pc = pc_rem
-                    continue
+                    rejected = True
                 elif not self._perpend and prod < 1 - self._normal_tol:
                     self._log.debug('{} - parallel (<{})'
-                                    .format(plchar, 1 - self._norm_tol))
-                    pc = pc_rem
-                    continue
-            # Analyze hull size
-            if self._min_area is not None and hull.area < self._min_area:
+                                    .format(plchar, 1 - self._normal_tol))
+                    rejected = True
+            # Analyze hull size. Note that the area of a "flat" hull
+            # is twice the area of one side.
+            if not rejected and self._min_face_area is not None and hull.area / 2 < self._min_face_area:
                 self._log.debug('{} - area : {} m^2 (< {} m^2)'
                                 .format(plchar, hull.area/2,
-                                        self._min_face_area/10))
-                pc = pc_rem
+                                        self._min_face_area))
+                rejected = True
+            # Process rejected planes
+            if rejected:
+                # Rejected planes are un-consumed and processed
+                self._log.debug('Marking as un-consumed')
+                npc_unconsumed = np.vstack((npc_unconsumed, pc_cand.to_array()))
+                pc_unprocessed = pc_unprocessed.extract(idx, negative=True)
                 continue
-            self._log.debug('{} ACCEPT'.format(plchar))
+            else:
+                # The plane is to be consumed
+                self._log.debug('{} ACCEPT'.format(plchar))
             # All criteria fulfilled. If consume_distance is given,
-            # then consume further points around the plane. TODO. See
-            # sphere_based_he_calibration.sphere_recognition.exp
+            # then consume further points around the plane.
             if self._cons_dist is not None:
-                # Move points in pc_rem to pc_pl, if they are within
-                # cons_dist from the identified plane
-                npvec = m3d.geometry.Plane(coeffs=model).plane_vector
-                pdists = np.abs(npvec.array.dot(pc.to_array().T) - 1)
+                # Re-compute a pc_cand from the plane model and select
+                # extended point set based on distance, cutting off at
+                # cons_dist
+                #npvec = m3d.geometry.Plane(coeffs=model).plane_vector
+                #self._log.debug('Normalized plane vector length: {}'.format(npvec.length))
+                #pdists = np.abs(npvec.array.dot(pc_unprocessed.to_array().T) - 1)
+                plp, pln = m3d.geometry.Plane(coeffs=model).point_normal
+                pdists = np.abs(pln.array.dot((pc_unprocessed.to_array() - plp.array).T))
                 xpidx = np.where(pdists < self._cons_dist)[0]
-                pc_pl = pc.extract(xpidx)
-                pc_rem = pc.extract(xpidx, negative=True)
-                hull = scipy.spatial.ConvexHull(pc_pl)
-                sapl = SACPlane(model, hull, pc_pl)
-                self._log.debug('SACPlane extended to #{}'.format(pc_pl.size))
+                if len(xpidx) > 0:
+                    self._log.debug('Consuming {} extra points'.format(len(xpidx) - len(idx)))
+                    pc_xcand = pc_unprocessed.extract(xpidx)
+                    pc_unprocessed = pc_unprocessed.extract(xpidx, negative=True)
+                    pc_cand = pcl.PointCloud(np.vstack((pc_cand.to_array(), pc_xcand.to_array())))
+                    hull = scipy.spatial.ConvexHull(pc_cand)
+                    sapl = SACPlane(model, hull, pc_cand)
+                    self._log.debug('SACPlane extended to #{}'.format(pc_cand.size))
+                else:
+                    self._log.debug('No extra points to consume')
+            else:
+                # Only extract the plane points from the unprocessed
+                pc_unprocessed = pc_unprocessed.extract(idx, negative=True)
             planes.append(sapl)
-            pc = pc_rem
+        # Remaining unprocessed points are un-consumed
+        npc_unconsumed = np.vstack((npc_unconsumed, pc_unprocessed.to_array()))
+        pc_unconsumed = pcl.PointCloud(npc_unconsumed)
+        pc_unconsumed.sensor_origin = pc.sensor_origin
+        pc_unconsumed.sensor_orientation = pc.sensor_orientation
         self._log.debug('{} acceptable planes found in {:.3f} s'
                         .format(len(planes), time.time()-t0))
-        return (planes, pc)
+        return planes, pc_unconsumed

@@ -17,6 +17,7 @@ import math3d as m3d
 import math3d.geometry
 import numpy as np
 import scipy.spatial as spsp
+import pcl
 
 
 class EuclideanClusterExtractor:
@@ -25,12 +26,19 @@ class EuclideanClusterExtractor:
         self._log = logging.getLogger('ECE')
         self.nn_dist = nn_dist
         self.nn_min = nn_min
-        self.min_pts=min_pts
-        self.max_pts =max_pts
+        self.min_pts = min_pts
+        self.max_pts = max_pts
         self.min_max_length = min_max_length
         self.max_max_length = max_max_length
-        
-    def extract(self, pc):
+
+    def __call__(self, pc, filter=False):
+        return self.extract(pc, filter)
+
+    def extract(self, pc, filter=False, remainder=False):
+        """Extract the clusters and return them as a list of separate point
+        clouds. If filter flagged, do not return cluster but return
+        instead the merge of all clusters.
+        """
         npc = pc.to_array()
         clusters = []
         points = list(range(pc.size))
@@ -59,7 +67,7 @@ class EuclideanClusterExtractor:
                 clusters.append(c)
             else:
                 self._log.debug('Pre-rejecting small cluster.')
-            acc_clusters = []
+        acc_clusters = []
         for c in clusters:
             cpc = pc.extract(c)
             cnpc = cpc.to_array()
@@ -83,8 +91,16 @@ class EuclideanClusterExtractor:
                     self._log.debug('Rejecting cluster of length {} [max_max_length]'.format(max_length))
                     continue
             acc_clusters.append(cpc)
-        return acc_clusters
-    
+        if filter:
+            ncfpc = np.vstack([c.to_array() for c in acc_clusters])
+            cfpc = pcl.PointCloud(ncfpc)
+            cfpc.sensor_orientation = pc.sensor_orientation
+            cfpc.sensor_origin = pc.sensor_origin
+            return cfpc
+        else:
+            return acc_clusters
+
+
 if __name__ == '__main__':
     import pcl
     logging.basicConfig(level=logging.DEBUG)
