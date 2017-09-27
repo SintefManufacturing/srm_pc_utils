@@ -25,6 +25,7 @@ class SACPlane:
         self.eqn = eqn
         self.hull = hull
         self.hull_points = hull.points[hull.vertices]
+        self.density = 2 * pc.size / hull.area 
         self.pc = pc
         self.obs_pose = obs_pose
         self.pl = geo.Plane(coeffs=eqn)
@@ -63,8 +64,8 @@ class SACPlane:
                             .format(type(other)))
 
     def __repr__(self):
-        return 'Pln:@c{}n{}#{}'.format(
-            self.centre.array, self.normal.array, len(self.hull.points))
+        return 'Pln:@c{}n{} #{} d{:.0f}'.format(
+            self.centre.array, self.normal.array, self.pc.size, self.density)
 
 
 class PlaneSegmenter:
@@ -78,6 +79,7 @@ class PlaneSegmenter:
                  plane_normal_tolerance=0.3,
                  minimum_plane_points=10,
                  minimum_plane_area=0,
+                 minimum_density=None,
                  consume_distance=None
                  ):
         """Notes:
@@ -107,6 +109,7 @@ class PlaneSegmenter:
         self._max_iter = maximum_iterations
         self._min_face_pts = minimum_plane_points
         self._min_face_area = minimum_plane_area
+        self._min_density = minimum_density
         self._log = logging.getLogger('PlaneSegm')
 
     def __call__(self, pc):
@@ -118,6 +121,7 @@ class PlaneSegmenter:
         un-consumed point cloud, that is the remainder of the point
         cloud which was not consumed by the matching planes.
         """
+        print('PC SORIGIN: {}'.format(pc.sensor_origin))
         t0 = time.time()
         # s_origin = pc.sensor_origin
         # s_orientation = pc.sensor_orientation
@@ -165,7 +169,13 @@ class PlaneSegmenter:
             plchar = str(sapl)
             # Flag when a test rejects the candidate plane
             rejected = False
-            # Check if correctly oriented
+            # Check density
+            if not rejected and self._min_density is not None:
+                if sapl.density < self._min_density:
+                    self._log.debug('{} - density ({}<{})'
+                                    .format(plchar, sapl.density, self._min_density))
+                    rejected = True
+            # Check oriented
             if not rejected and self._axis is not None:
                 prod = np.abs(sapl.normal * self._axis)
                 if self._perpend and prod > self._normal_tol:
@@ -210,6 +220,8 @@ class PlaneSegmenter:
                     pc_xcand = pc_unprocessed.extract(xpidx)
                     pc_unprocessed = pc_unprocessed.extract(xpidx, negative=True)
                     pc_cand = pcl.PointCloud(np.vstack((pc_cand.to_array(), pc_xcand.to_array())))
+                    pc_cand.sensor_origin = pc.sensor_origin
+                    pc_cand.sensor_orientation = pc.sensor_orientation
                     hull = scipy.spatial.ConvexHull(pc_cand)
                     sapl = SACPlane(model, hull, pc_cand)
                     self._log.debug('SACPlane extended to #{}'.format(pc_cand.size))
