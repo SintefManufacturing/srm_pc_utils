@@ -74,7 +74,7 @@ class PlaneSegmenter:
                  use_point_normals=True,
                  normal_distance_weight=0.01,
                  axis=None,
-                 perpend=True,
+                 perpend=False,
                  maximum_iterations=10000,
                  plane_normal_tolerance=0.3,
                  minimum_plane_points=10,
@@ -121,7 +121,7 @@ class PlaneSegmenter:
         un-consumed point cloud, that is the remainder of the point
         cloud which was not consumed by the matching planes.
         """
-        print('PC SORIGIN: {}'.format(pc.sensor_origin))
+        self._log.debug('PC SORIGIN: %s' % str(pc.sensor_origin))
         t0 = time.time()
         # s_origin = pc.sensor_origin
         # s_orientation = pc.sensor_orientation
