@@ -24,12 +24,16 @@ def crop_roi(npc, roi):
                (npc[:, 2] > roi[2][0]) & (npc[:, 2] < roi[2][1])]
 
 
-def projection_along(npc, direction):
+def projection_along(npc, direction, origin=None):
     """Calculate the projection of the cloud points along the given
     'direction'. If 'direction' is a unit vector, measurement units will
     be preserved."""
     if type(direction) == m3d.Vector:
         direction = direction.array
+    if origin is not None:
+        if type(origin) == m3d.Vector:
+            origin = origin.array
+        npc = npc - origin
     return npc.dot(direction)
 
 
