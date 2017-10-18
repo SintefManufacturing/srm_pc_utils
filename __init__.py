@@ -13,15 +13,47 @@ __status__ = "Development"
 
 import numpy as np
 import math3d as m3d
+import pcl
 
 
-def crop_roi(npc, roi):
-    """Given a npy-point cloud and an 'roi' in the same coordinate
-    reference, return the cropped point cloud.
+def transform_npc(npc, trf):
+    """Apply the transform 'trf' to the numpy point cloud 'npc', returning
+    the transformed point cloud.
     """
-    return npc[(npc[:, 0] > roi[0][0]) & (npc[:, 0] < roi[0][1]) &
-               (npc[:, 1] > roi[1][0]) & (npc[:, 1] < roi[1][1]) &
-               (npc[:, 2] > roi[2][0]) & (npc[:, 2] < roi[2][1])]
+    return trf.orient.array.dot(npc.T).T + trf.pos.array
+
+
+def transform_pc(pc, trf):
+    """Apply the transform 'trf' to the pcl.PointCloud object 'pc',
+    returning the transformed point cloud with correctly transformed
+    sensor pose.
+    """
+    new_pc = pcl.PointCloud(
+        transform_npc(pc.to_array(), trf).astype(np.float32))
+    new_pc.sensor_origin = (trf.orient.array.dot(pc.sensor_origin[:3]) +
+                            trf.pos.array).astype(np.float32)
+    new_pc.sensor_orientation = (
+        (trf.orient * m3d.UnitQuaternion(*pc.sensor_orientation))
+        .unit_quaternion.array).astype(np.float32)
+    return new_pc
+
+
+def crop_roi(npc, roi, roi_in_base=None):
+    """Given a npy-point cloud and an 'roi' in the same coordinate
+    reference, return the cropped point cloud. If 'roi_in_base' is
+    given, it is assumed to represent the reference in which the ROI
+    is given.
+    """
+    if roi_in_base is not None:
+        # Transform the point cloud to ROI reference
+        npc = transform_npc(npc, roi_in_base.inverse)
+    npc_cropped = npc[(npc[:, 0] > roi[0][0]) & (npc[:, 0] < roi[0][1]) &
+                      (npc[:, 1] > roi[1][0]) & (npc[:, 1] < roi[1][1]) &
+                      (npc[:, 2] > roi[2][0]) & (npc[:, 2] < roi[2][1])]
+    if roi_in_base is not None:
+        # Transform back to base coordinates
+        npc_cropped = transform_npc(npc_cropped, roi_in_base)
+    return npc_cropped
 
 
 def projection_along(npc, direction, origin=None):
