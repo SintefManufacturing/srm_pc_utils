@@ -80,7 +80,8 @@ class PlaneSegmenter:
                  minimum_plane_points=10,
                  minimum_plane_area=0,
                  minimum_density=None,
-                 consume_distance=None
+                 consume_distance=None,
+                 noise=0.0
                  ):
         """Notes:
 
@@ -96,6 +97,11 @@ class PlaneSegmenter:
         Return value is a pair. The first element is a list of the
         matched SAC planes, the second element is the remainder point
         cloud.
+
+        If 'noise' is given, this amount of uniform noise is added to
+        the point cloud prior to processing. This may remove problems
+        with instability of convex hull calculation and
+        stratification.
         """
         self._dist_tol = distance_tolerance
         self._norm_dist_weight = normal_distance_weight
@@ -110,6 +116,7 @@ class PlaneSegmenter:
         self._min_face_pts = minimum_plane_points
         self._min_face_area = minimum_plane_area
         self._min_density = minimum_density
+        self._noise = noise
         self._log = logging.getLogger('PlaneSegm')
 
     def __call__(self, pc):
@@ -131,8 +138,17 @@ class PlaneSegmenter:
         planes = []
         # The unprocessed points in the point cloud decreases
         # monotonically as planes are found, whether they match or
-        # not.
-        pc_unprocessed = pc
+        # not. Optionally add noise to avoid instablility.
+        if self._noise is not None and self._noise > 0.0:
+            pc_unprocessed = pcl.PointCloud(
+                (pc.to_array() +
+                 self._noise * (2*np.random.random((pc.size, 3))-1))
+                .astype(np.float32))
+            pc_unprocessed.sensor_origin = pc.sensor_origin
+            pc_unprocessed.sensor_orientation = pc.sensor_orientation
+        else:
+            pc_unprocessed = pc
+
         # The points that have not been consumed by the matching
         # planes steadily increase, as non-matching planes are
         # found. At the end, the remaining unprocessed points are
@@ -149,7 +165,7 @@ class PlaneSegmenter:
                 segm.set_normal_distance_weight(self._norm_dist_weight)
                 segm.set_max_iterations(self._max_iter)
             else:
-                segm = pc.make_segmenter()
+                segm = pc_unprocessed.make_segmenter()
                 segm.set_model_type(pcl.SACMODEL_PLANE)
             segm.set_optimize_coefficients(True)
             segm.set_method_type(pcl.SAC_RANSAC)
@@ -164,7 +180,12 @@ class PlaneSegmenter:
                 break
             # Extract points
             pc_cand = pc_unprocessed.extract(idx)
-            hull = scipy.spatial.ConvexHull(pc_cand)
+            # Form the convex hull to analyze area and point
+            # density. N.B.: We are matching a 3D convex hull on a
+            # point set which is essentially planar. This is not
+            # stable, so some noise is added to make sure there is
+            # some volume.
+            hull = scipy.spatial.ConvexHull(pc_cand.to_array())
             sapl = SACPlane(model, hull, pc_cand)
             plchar = str(sapl)
             # Flag when a test rejects the candidate plane
@@ -222,7 +243,7 @@ class PlaneSegmenter:
                     pc_cand = pcl.PointCloud(np.vstack((pc_cand.to_array(), pc_xcand.to_array())))
                     pc_cand.sensor_origin = pc.sensor_origin
                     pc_cand.sensor_orientation = pc.sensor_orientation
-                    hull = scipy.spatial.ConvexHull(pc_cand)
+                    hull = scipy.spatial.ConvexHull(pc_cand.to_array())
                     sapl = SACPlane(model, hull, pc_cand)
                     self._log.debug('SACPlane extended to #{}'.format(pc_cand.size))
                 else:
