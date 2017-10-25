@@ -38,7 +38,7 @@ def transform_pc(pc, trf):
     return new_pc
 
 
-def crop_roi(npc, roi, roi_in_base=None):
+def crop_npc(npc, roi, roi_in_base=None):
     """Given a npy-point cloud and an 'roi' in the same coordinate
     reference, return the cropped point cloud. If 'roi_in_base' is
     given, it is assumed to represent the reference in which the ROI
@@ -56,10 +56,26 @@ def crop_roi(npc, roi, roi_in_base=None):
     return npc_cropped
 
 
-def projection_along(npc, direction, origin=None):
+def crop_pc(pc, roi, roi_in_base=None):
+    """Given a pcl point cloud and an 'roi' in the same coordinate
+    reference, return the cropped point cloud. If 'roi_in_base' is
+    given, it is assumed to represent the reference in which the ROI
+    is given.
+    """
+    cropped_pc = pcl.PointCloud(crop_npc(pc.to_array(), roi, roi_in_base))
+    cropped_pc.sensor_origin = pc.sensor_origin
+    cropped_pc.sensor_orientation = pc.sensor_orientation
+    return cropped_pc
+
+
+def projection_along(pc, direction, origin=None):
     """Calculate the projection of the cloud points along the given
     'direction'. If 'direction' is a unit vector, measurement units will
     be preserved."""
+    if type(pc) == pcl.PointCloud:
+        npc = pc.to_array()
+    else:
+        npc = pc
     if type(direction) == m3d.Vector:
         direction = direction.array
     if origin is not None:
@@ -69,16 +85,35 @@ def projection_along(npc, direction, origin=None):
     return npc.dot(direction)
 
 
-def crop_along(npc, origo, direction, limits):
-    """Crop the point cloud according to the 'limits', which is a pair,
-    when projected on 'direction' and measured from position 'origo'.
-    """
+def crop_along_npc(npc, origo, direction, limits):
     if type(origo) == m3d.Vector:
         origo = origo.array
     if type(direction) == m3d.Vector:
         direction = direction.array
     proj = (npc - origo).dot(direction)
     return npc[(proj > limits[0]) & (proj < limits[1])]
+
+
+def crop_along_pc(pc, origo, direction, limits):
+    """Crop the point cloud according to the 'limits', which is a pair,
+    when projected on 'direction' and measured from position 'origo'.
+    """
+    if type(pc) == pcl.PointCloud:
+        npc = pc.to_array()
+    else:
+        npc = pc
+    cropped_npc = crop_along_npc(npc, origo, direction, limits)
+    # Return the correct type
+    if type(pc) == pcl.PointCloud:
+        cropped_pc = pcl.PointCloud(cropped_npc)
+        cropped_pc.sensor_origin = pc.sensor_origin
+        cropped_pc.sensor_orientation = pc.sensor_orientation
+    else:
+        cropped_pc = cropped_npc
+    return cropped_pc
+
+
+crop_along = crop_along_pc
 
 
 def transform_roi(b_in_a, roi_b):
