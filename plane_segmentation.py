@@ -20,12 +20,16 @@ import numpy as np
 import pcl
 import scipy.spatial
 
+
 class SACPlane:
+    """Utility class for holding and communicating information and data
+    underlying the SAC identification of a point cloud plane.
+    """
     def __init__(self, eqn, hull, pc=None, obs_pose=None):
         self.eqn = eqn
         self.hull = hull
         self.hull_points = hull.points[hull.vertices]
-        self.density = 2 * pc.size / hull.area 
+        self.density = 2 * pc.size / hull.area
         self.pc = pc
         self.obs_pose = obs_pose
         self.pl = geo.Plane(coeffs=eqn)
@@ -69,6 +73,9 @@ class SACPlane:
 
 
 class PlaneSegmenter:
+    """A flexible and versatile plane segmenter which internally uses
+    pcl.make_segmenter[_normals] with pcl.SACMODEL_PLANE.
+    """
     def __init__(self,
                  distance_tolerance=0.001,
                  use_point_normals=True,
@@ -78,7 +85,7 @@ class PlaneSegmenter:
                  maximum_iterations=10000,
                  plane_normal_tolerance=0.3,
                  minimum_plane_points=10,
-                 minimum_plane_area=0,
+                 minimum_plane_area=0.0,
                  minimum_density=None,
                  consume_distance=None,
                  noise=0.0
