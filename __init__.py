@@ -33,8 +33,8 @@ def transform_pc(pc, trf):
     new_pc.sensor_origin = (trf.orient.array.dot(pc.sensor_origin[:3]) +
                             trf.pos.array).astype(np.float32)
     new_pc.sensor_orientation = (
-        (trf.orient * m3d.UnitQuaternion(*pc.sensor_orientation))
-        .unit_quaternion.array).astype(np.float32)
+        (trf.orient * m3d.Versor(*pc.sensor_orientation))
+        .versor.array).astype(np.float32)
     return new_pc
 
 

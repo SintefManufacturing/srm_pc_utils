@@ -40,7 +40,7 @@ class SACPlane:
             # If pc is given, and no observation pose, use the one
             # from the pc.
             self.obs_pose = m3d.Transform(
-                m3d.UnitQuaternion(*pc.sensor_orientation).orientation,
+                m3d.Versor(*pc.sensor_orientation).orientation,
                 m3d.Vector(pc.sensor_origin[:3]))
         if self.obs_pose is not None:
             # Correct the normal to outward if we have an observation
@@ -139,7 +139,7 @@ class PlaneSegmenter:
         t0 = time.time()
         # s_origin = pc.sensor_origin
         # s_orientation = pc.sensor_orientation
-        # s_pose = m3d.Transform(m3d.UnitQuaternion(*s_orientation).orientation,
+        # s_pose = m3d.Transform(m3d.Versor(*s_orientation).orientation,
         #                        m3d.Vector(s_origin))
         # The matching planes
         planes = []
